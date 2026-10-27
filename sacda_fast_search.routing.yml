@@ -1,0 +1,17 @@
+# Public JSON search. Cacheable per query string, so the anonymous page cache
+# serves repeats without booting the controller.
+sacda_fast_search.api:
+  path: '/api/search'
+  defaults:
+    _controller: '\Drupal\sacda_fast_search\Controller\FastSearchController::api'
+  methods: [GET]
+  requirements:
+    _permission: 'access content'
+
+sacda_fast_search.page:
+  path: '/search-beta'
+  defaults:
+    _controller: '\Drupal\sacda_fast_search\Controller\FastSearchController::page'
+    _title: 'Search Content'
+  requirements:
+    _permission: 'access content'

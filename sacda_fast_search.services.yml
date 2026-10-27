@@ -1,0 +1,5 @@
+services:
+  sacda_fast_search.or_not_terms_subscriber:
+    class: Drupal\sacda_fast_search\EventSubscriber\OrNotTermsSubscriber
+    tags:
+      - name: event_subscriber

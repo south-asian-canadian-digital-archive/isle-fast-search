@@ -1,0 +1,22 @@
+# Built from ui/ with `bun run build`. dist/ is committed because the Drupal
+# image build does not run a JS toolchain. Fixed names, no `version`, not
+# preprocessed: see sacda_ingest_audit.libraries.yml for why.
+#
+# The app emits the sacda theme's markup and classes; fast-search.css only
+# holds the few deliberate departures (e.g. the phone layout of the results
+# header). The others are the stylesheets /search gets from the libraries of its
+# blocks and view. Referenced directly rather than depending on those
+# libraries, whose JavaScript (facets widgets, Views AJAX, #states) would
+# attach to this app's DOM.
+app:
+  js:
+    dist/fast-search.js: { attributes: { defer: true }, preprocess: false, minified: true }
+  css:
+    component:
+      /modules/contrib/advanced_search/css/advanced_search.pager.css: {}
+      /modules/contrib/facets/css/hierarchical.css: {}
+      /core/misc/components/item-list.module.css: {}
+      /core/modules/views/css/views.module.css: {}
+      dist/fast-search.css: { preprocess: false }
+  dependencies:
+    - core/drupalSettings

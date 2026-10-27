@@ -1,0 +1,10 @@
+name: 'SACDA Fast Search'
+type: module
+description: 'Experimental search: a JSON endpoint over the Solr index plus a Svelte UI, with no server-side page rendering.'
+package: SACDA
+core_version_requirement: ^10 || ^11
+dependencies:
+  # Facet definitions are read from the existing facets so both UIs agree.
+  - facets:facets
+  - search_api:search_api
+  - sacda_modules:sacda_modules
