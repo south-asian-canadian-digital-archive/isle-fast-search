@@ -1,0 +1,158 @@
+<?php
+
+/**
+ * @file
+ * Renders /search-beta through /search's page layout and block placement.
+ *
+ * The page is Drupal's: same page template, regions and blocks, in the order
+ * and with the labels and visibility configured for /search. Only the blocks
+ * the Svelte app replaces (advanced search, result pager, the view's facets)
+ * are swapped for empty mount points, so a block added to those regions, or
+ * one moved or relabelled, shows up here too without touching this module.
+ */
+
+use Drupal\Core\Block\BlockPluginInterface;
+use Drupal\facets\FacetInterface;
+use Drupal\sacda_fast_search\Controller\FastSearchController;
+use Drupal\sacda_fast_search\Plugin\Block\FastSearchFacetBlock;
+use Drupal\sacda_fast_search\Plugin\Condition\FastSearchViewInclusion;
+
+/**
+ * Whether the current request is /search-beta.
+ */
+function _sacda_fast_search_is_page(): bool {
+  return \Drupal::routeMatch()->getRouteName() === 'sacda_fast_search.page';
+}
+
+/**
+ * Implements hook_theme().
+ */
+function sacda_fast_search_theme(): array {
+  return [
+    'sacda_fast_search_slot' => [
+      'variables' => ['slot' => '', 'alias' => ''],
+    ],
+  ];
+}
+
+/**
+ * Implements hook_theme_suggestions_HOOK_alter() for page templates.
+ *
+ * /search's page--search template: results layout plus the filters sidebar.
+ */
+function sacda_fast_search_theme_suggestions_page_alter(array &$suggestions): void {
+  if (_sacda_fast_search_is_page()) {
+    $suggestions[] = 'page__search';
+  }
+}
+
+/**
+ * Implements hook_condition_info_alter().
+ *
+ * Blocks placed for /search are limited to it with Context's "view inclusion"
+ * condition; ours also counts /search-beta as that view.
+ */
+function sacda_fast_search_condition_info_alter(array &$definitions): void {
+  if (isset($definitions['view_inclusion'])) {
+    $definitions['view_inclusion']['class'] = FastSearchViewInclusion::class;
+  }
+}
+
+/**
+ * Implements hook_block_alter().
+ *
+ * Facet blocks of /search's facet source must count that source as visible
+ * here too.
+ */
+function sacda_fast_search_block_alter(array &$definitions): void {
+  foreach ($definitions as $id => &$definition) {
+    if (str_starts_with($id, 'facet_block:')) {
+      $definition['class'] = FastSearchFacetBlock::class;
+    }
+  }
+}
+
+/**
+ * Implements hook_block_view_alter().
+ *
+ * Swaps the blocks the app renders for mount points. Their content is never
+ * built here, so the facet blocks cost nothing on this page.
+ */
+function sacda_fast_search_block_view_alter(array &$build, BlockPluginInterface $block): void {
+  if (!_sacda_fast_search_is_page()) {
+    return;
+  }
+  $plugin = $block->getPluginId();
+  $derivative = FastSearchController::VIEW . '__' . FastSearchController::DISPLAY;
+  $slot = match (TRUE) {
+    $plugin === 'advanced_search_block:' . $derivative => ['advanced-search', ''],
+    $plugin === 'advanced_search_result_pager:' . $derivative => ['result-pager', ''],
+    str_starts_with($plugin, 'facet_block:') => _sacda_fast_search_facet_slot(substr($plugin, 12)),
+    default => NULL,
+  };
+  if ($slot === FALSE) {
+    // Facet blocks of other sources (collection pages) render empty and
+    // hidden on /search; here they are not built at all.
+    $build = ['#cache' => ['contexts' => ['route']]];
+  }
+  elseif ($slot) {
+    // No cache keys: the slot is trivial, and must never be stored where
+    // /search could be served it.
+    $build = [
+      '#theme' => 'sacda_fast_search_slot',
+      '#slot' => $slot[0],
+      '#alias' => $slot[1],
+      '#weight' => $build['#weight'] ?? 0,
+      '#cache' => ['contexts' => ['route']],
+    ];
+  }
+}
+
+/**
+ * The slot for a facet block of /search's facet source; FALSE for another
+ * source's facet, which cannot show anything on this page.
+ */
+function _sacda_fast_search_facet_slot(string $facet_id): array|false {
+  $facet = \Drupal::entityTypeManager()->getStorage('facets_facet')->load($facet_id);
+  return $facet instanceof FacetInterface && $facet->getFacetSourceId() === FastSearchController::FACET_SOURCE
+    ? ['facet', $facet->getUrlAlias()]
+    : FALSE;
+}
+
+/**
+ * Implements hook_theme_registry_alter().
+ *
+ * The theme's own preprocess decides two layout details from what /search
+ * renders server-side, which this page leaves to the browser. Ours must run
+ * after it.
+ */
+function sacda_fast_search_theme_registry_alter(array &$registry): void {
+  // Template variants (page__search, region__content…) carry their own copy
+  // of the base hook's preprocess list.
+  foreach ($registry as $hook => &$info) {
+    $base = $info['base hook'] ?? $hook;
+    if ($base === 'page' || $base === 'region') {
+      $info['preprocess functions'][] = '_sacda_fast_search_late_preprocess_' . $base;
+    }
+  }
+}
+
+/**
+ * Keeps the filters sidebar; the theme hides it when its HTML has no facet
+ * values, and here the values arrive later. The app hides it when the search
+ * returns none.
+ */
+function _sacda_fast_search_late_preprocess_page(array &$variables): void {
+  if (_sacda_fast_search_is_page()) {
+    $variables['show_filters_sidebar'] = TRUE;
+  }
+}
+
+/**
+ * Full-width content region, as region--content gives /search's route.
+ */
+function _sacda_fast_search_late_preprocess_region(array &$variables): void {
+  if (($variables['region'] ?? '') === 'content' && _sacda_fast_search_is_page()) {
+    $variables['self_widthed_content'] = TRUE;
+  }
+}

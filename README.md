@@ -31,13 +31,23 @@ Query parameters match `/search`: `f[n]=alias:value` facets,
 
 It reads the same configuration rather than copying it:
 
+- **Page and blocks**: `/search-beta` is rendered by Drupal with /search's
+  page template, regions and block placement. Blocks limited to /search
+  with Context's "view inclusion" condition, and facet blocks set to "only
+  visible when the facet source is visible", count `/search-beta` as /search
+  (`FastSearchViewInclusion`, `FastSearchFacetBlock`). The blocks the app
+  renders (advanced search, result pager, the view's facets) are swapped for
+  mount points (`sacda_fast_search_block_view_alter()`), and the app mounts
+  each part where its block was. So blocks added to those regions, moved,
+  relabelled or hidden show up here as they do on /search. Facet blocks of
+  other sources, which render empty there, are not built here at all.
 - **Facets**: the enabled facet blocks in the theme's `filters` region, in
   block order with block labels; facet processors (ordering, hierarchy,
   hide inactive siblings, label truncation) are mirrored.
-- **Settings**: per facet, the soft limit, "Show more"/"Show less"
+- **Settings**: the page title from the view; per facet, the soft limit, "Show more"/"Show less"
   labels, count display, hard limit, minimum count and sort processors (in
   their weight order and direction); from the view, the items-per-page
-  options, default and pager size, and the exposed sorts with their labels;
+  options, default, pager type (full, mini or none) and size, and the exposed sorts with their labels;
   from the advanced search block and `advanced_search.settings`, the
   keyword fields, the "all fields" label and the display modes. The page
   reads them when it is built, so changes in Drupal apply here too.

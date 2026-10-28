@@ -1,0 +1,8 @@
+{#
+/**
+ * @file
+ * Where the app mounts a block it renders itself (see
+ * sacda_fast_search_block_view_alter()). The app replaces this element.
+ */
+#}
+<div data-fast-search-slot="{{ slot }}"{% if alias %} data-alias="{{ alias }}"{% endif %} hidden></div>

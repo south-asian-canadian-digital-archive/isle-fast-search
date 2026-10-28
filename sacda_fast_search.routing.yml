@@ -12,6 +12,6 @@ sacda_fast_search.page:
   path: '/search-beta'
   defaults:
     _controller: '\Drupal\sacda_fast_search\Controller\FastSearchController::page'
-    _title: 'Search Content'
+    _title_callback: '\Drupal\sacda_fast_search\Controller\FastSearchController::title'
   requirements:
     _permission: 'access content'

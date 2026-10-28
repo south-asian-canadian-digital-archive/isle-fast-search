@@ -44,13 +44,13 @@ use Symfony\Component\HttpFoundation\Request;
 class FastSearchController extends ControllerBase {
 
   protected const INDEX = 'default_solr_index';
-  protected const FACET_SOURCE = 'search_api:views_page__solr_search_content__page_1';
+  public const FACET_SOURCE = 'search_api:views_page__solr_search_content__page_1';
   protected const THEME = 'sacda';
   protected const BUNDLES = ['archival_component', 'collection', 'islandora_object'];
   // The view behind /search; pager, sorts and keyword fields come from it and
   // from the blocks placed on it.
-  protected const VIEW = 'solr_search_content';
-  protected const DISPLAY = 'page_1';
+  public const VIEW = 'solr_search_content';
+  public const DISPLAY = 'page_1';
   // facets' sort processors, by the result property each compares.
   protected const SORTS = [
     'active_widget_order' => 'active',
@@ -83,7 +83,28 @@ class FastSearchController extends ControllerBase {
   }
 
   /**
+   * Route name of the view display behind /search.
+   */
+  public static function viewRoute(): string {
+    return 'view.' . static::VIEW . '.' . static::DISPLAY;
+  }
+
+  /**
+   * Page title: the view display's, as on /search.
+   */
+  public function title(): string {
+    $view = $this->config('views.view.' . static::VIEW);
+    return (string) ($view->get('display.' . static::DISPLAY . '.display_options.title')
+      ?? $view->get('display.default.display_options.title')
+      ?? $view->get('label'));
+  }
+
+  /**
    * Page shell for the Svelte app.
+   *
+   * This is only the main content (the results); the rest of the page,
+   * including where the app's other parts mount, is /search's block layout
+   * (see sacda_fast_search.module).
    */
   public function page(): array {
     return [
@@ -140,6 +161,7 @@ class FastSearchController extends ControllerBase {
     return [
       'perPage' => $per_page ?: [$default],
       'perPageDefault' => $default,
+      'pagerType' => (string) ($option('pager')['type'] ?? 'full'),
       'pagerQuantity' => (int) ($pager['quantity'] ?? 9),
       'orders' => $orders,
       'fields' => $fields,

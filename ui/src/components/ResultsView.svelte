@@ -8,8 +8,8 @@
   import ResultSummary from './ResultSummary.svelte';
 </script>
 
-<div id="block-sacda-content">
-  <div class="views-element-container">
+<!-- Inside Drupal's own main-content block wrapper. -->
+<div class="views-element-container">
     <div class="view-{search.display}" class:opacity-60={search.loading} aria-busy={search.loading}>
       <header>
         <ResultSummary id="ajax-page-summary" />
@@ -23,5 +23,4 @@
       </div>
       <Pager />
     </div>
-  </div>
 </div>

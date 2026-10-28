@@ -12,7 +12,11 @@
   let loading = $state(false);
 
   let items = $derived(open && full ? full : facet.items);
-  let expandable = $derived(facet.softLimit && (facet.more > 0 || facet.items.length > facet.softLimit));
+  // soft-limit.js hides top-level values past the limit but shows the link
+  // when the values at every level outnumber it, so nested values (Map under
+  // Cartographic) can bring it up with nothing hidden. Kept, to match /search.
+  const count = (items) => items.reduce((n, i) => n + 1 + count(i.children), 0);
+  let expandable = $derived(facet.softLimit && (facet.more > 0 || count(facet.items) > facet.softLimit));
 
   // A new search brings new counts, so a list fetched for the old one is stale.
   $effect.pre(() => {

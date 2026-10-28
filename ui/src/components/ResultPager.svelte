@@ -10,6 +10,7 @@
   }
 </script>
 
+{#if search.data}
 <div class="advanced_search_result_pager" data-drupal-pager-id="solr_search_content__page_1" id="block-sacda-solrsearchcontentsearchresultspagerforsearchpage">
   <ResultSummary />
   <div class="pager__group">
@@ -40,6 +41,7 @@
     </div>
   </div>
 </div>
+{/if}
 
 <style>
   /* Phones: /search lets this row wrap wherever it falls, which leaves the

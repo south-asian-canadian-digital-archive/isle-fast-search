@@ -12,6 +12,8 @@ export let ORDERS = [['search_api_relevance_desc', 'Relevance ↑']];
 export let PER_PAGE = [15];
 export let PER_PAGE_DEFAULT = 15;
 export let PAGER_QUANTITY = 5;
+// Views pager plugin: full, mini (previous/next only) or some/none (no links).
+export let PAGER_TYPE = 'full';
 export let DISPLAYS = ['grid', 'list'];
 export let DEFAULT_DISPLAY = 'grid';
 
@@ -21,6 +23,7 @@ export function configure(settings = {}) {
   if (settings.perPage?.length) PER_PAGE = settings.perPage;
   if (settings.perPageDefault) PER_PAGE_DEFAULT = settings.perPageDefault;
   if (settings.pagerQuantity) PAGER_QUANTITY = settings.pagerQuantity;
+  if (settings.pagerType) PAGER_TYPE = settings.pagerType;
   if (settings.displays?.length) DISPLAYS = settings.displays;
   if (settings.defaultDisplay) DEFAULT_DISPLAY = settings.defaultDisplay;
 }
