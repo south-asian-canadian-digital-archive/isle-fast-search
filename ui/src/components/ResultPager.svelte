@@ -1,7 +1,7 @@
 <script>
   // block--advanced-search-result-pager.html.twig: per-page, display mode and
   // sort. Its pager is display:none on /search, so it is not rendered here.
-  import { search, ORDERS, PER_PAGE } from '../lib/search.svelte.js';
+  import { search, ORDERS, PER_PAGE, DISPLAYS } from '../lib/search.svelte.js';
   import ResultSummary from './ResultSummary.svelte';
 
   function nav(event, overrides) {
@@ -22,7 +22,7 @@
       {/each}
     </ul>
     <ul class="fast-search-display">
-      {#each [['list', 'List', 'fa-list'], ['grid', 'Grid', 'fa-th']] as [mode, label, icon]}
+      {#each [['list', 'List', 'fa-list'], ['grid', 'Grid', 'fa-th']].filter(([mode]) => DISPLAYS.includes(mode)) as [mode, label, icon]}
         <li class="pager__item" class:is-active={search.display === mode}>
           <a href={search.href({ display: mode })} class="pager__link pager__display" class:pager__link--is-active={search.display === mode} aria-label="Display as  {label}" onclick={(e) => nav(e, { display: mode })}>
             <i class="fa {icon}" aria-hidden="true">&nbsp;</i><span class="display-mode">{label}</span>

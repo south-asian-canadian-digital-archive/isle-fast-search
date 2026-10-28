@@ -34,6 +34,17 @@ It reads the same configuration rather than copying it:
 - **Facets**: the enabled facet blocks in the theme's `filters` region, in
   block order with block labels; facet processors (ordering, hierarchy,
   hide inactive siblings, label truncation) are mirrored.
+- **Settings**: per facet, the soft limit, "Show more"/"Show less"
+  labels, count display, hard limit, minimum count and sort processors (in
+  their weight order and direction); from the view, the items-per-page
+  options, default and pager size, and the exposed sorts with their labels;
+  from the advanced search block and `advanced_search.settings`, the
+  keyword fields, the "all fields" label and the display modes. The page
+  reads them when it is built, so changes in Drupal apply here too.
+- **Facet size**: each response carries only a facet's first soft-limit
+  values (plus selected ones) and a `more` count. "Show more" fetches the
+  rest with `/api/search?…&facet=<alias>`. With ~20k items PROD has
+  ~8,000 facet values, which made the full response ~800 KB.
 - **Keyword search**: `a[...]` is applied by advanced_search's own Solr
   subscriber, so semantics and relevance order are the same.
 - **Markup**: one Svelte component per theme template, emitting the
@@ -58,5 +69,5 @@ bun install
 bun run build   # writes dist/
 ```
 
-`dist/` is committed because the site's Docker image build has no JS
-toolchain. Svelte 5, Vite 8.
+CI rebuilds `dist/` before building the image, and the image ships only
+`dist/`. Svelte 5, Vite 8.

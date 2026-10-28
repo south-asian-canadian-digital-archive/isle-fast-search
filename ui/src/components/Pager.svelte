@@ -1,11 +1,11 @@
 <script>
-  // navigation/pager.html.twig (full pager, quantity 5).
-  import { search } from '../lib/search.svelte.js';
+  // navigation/pager.html.twig (full pager; quantity from the view).
+  import { search, PAGER_QUANTITY } from '../lib/search.svelte.js';
   import { pagerWindow } from '../lib/pager.js';
 
   let total = $derived(Math.ceil(search.data.total / search.data.perPage));
   let current = $derived(search.data.page);
-  let win = $derived(pagerWindow(current, total));
+  let win = $derived(pagerWindow(current, total, PAGER_QUANTITY));
 
   function go(event, page) {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

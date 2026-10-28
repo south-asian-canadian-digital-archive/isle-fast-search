@@ -1,7 +1,10 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
+import { configure } from './lib/search.svelte.js';
 
 const target = document.getElementById('sacda-fast-search');
 if (target) {
-  mount(App, { target, props: { endpoint: window.drupalSettings?.sacdaFastSearch?.endpoint ?? '/api/search' } });
+  const settings = window.drupalSettings?.sacdaFastSearch ?? {};
+  configure(settings);
+  mount(App, { target, props: { endpoint: settings.endpoint ?? '/api/search' } });
 }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\sacda_fast_search\Controller;
 
+use Drupal\Component\Transliteration\TransliterationInterface;
 use Drupal\Component\Utility\Unicode;
 use Drupal\Core\Cache\CacheableJsonResponse;
 use Drupal\Core\Cache\CacheableMetadata;
@@ -46,9 +47,17 @@ class FastSearchController extends ControllerBase {
   protected const FACET_SOURCE = 'search_api:views_page__solr_search_content__page_1';
   protected const THEME = 'sacda';
   protected const BUNDLES = ['archival_component', 'collection', 'islandora_object'];
-  protected const PER_PAGE = [15, 60, 120];
-  // The view's exposed sorts.
-  protected const ORDERS = ['search_api_relevance', 'title', 'edtf_year'];
+  // The view behind /search; pager, sorts and keyword fields come from it and
+  // from the blocks placed on it.
+  protected const VIEW = 'solr_search_content';
+  protected const DISPLAY = 'page_1';
+  // facets' sort processors, by the result property each compares.
+  protected const SORTS = [
+    'active_widget_order' => 'active',
+    'count_widget_order' => 'count',
+    'display_value_widget_order' => 'sortLabel',
+    'raw_value_widget_order' => 'value',
+  ];
   // Facets on these fields hold taxonomy term IDs, not names.
   protected const TERM_ID_FIELDS = ['field_resource_type', 'field_subjects_name', 'child_resource_type'];
   // The view's did_image formatter and its field_description trim.
@@ -60,6 +69,7 @@ class FastSearchController extends ControllerBase {
     protected ImageDiscoveryInterface $imageDiscovery,
     protected AliasManagerInterface $aliasManager,
     protected FileUrlGeneratorInterface $fileUrlGenerator,
+    protected TransliterationInterface $transliteration,
   ) {}
 
   public static function create(ContainerInterface $container): static {
@@ -68,6 +78,7 @@ class FastSearchController extends ControllerBase {
       $container->get('dgi_image_discovery.service'),
       $container->get('path_alias.manager'),
       $container->get('file_url_generator'),
+      $container->get('transliteration'),
     );
   }
 
@@ -79,9 +90,76 @@ class FastSearchController extends ControllerBase {
       '#markup' => '<div id="sacda-fast-search"></div>',
       '#attached' => [
         'library' => ['sacda_fast_search/app'],
-        'drupalSettings' => ['sacdaFastSearch' => ['endpoint' => '/api/search']],
+        'drupalSettings' => ['sacdaFastSearch' => ['endpoint' => '/api/search'] + $this->settings()],
       ],
+      '#cache' => ['tags' => ['config:views.view.' . static::VIEW, 'config:block_list', 'config:advanced_search.settings']],
     ];
+  }
+
+  /**
+   * Page settings read from the /search configuration.
+   *
+   * Everything the UI would otherwise hardcode: the view's pager and exposed
+   * sorts, the advanced search block's fields and advanced_search's labels
+   * and display modes. Editing any of them in Drupal changes this page too.
+   */
+  protected function settings(): array {
+    $view = $this->config('views.view.' . static::VIEW);
+    $option = fn(string $key) => $view->get('display.' . static::DISPLAY . '.display_options.' . $key)
+      ?? $view->get('display.default.display_options.' . $key);
+
+    $pager = $option('pager')['options'] ?? [];
+    $default = (int) ($pager['items_per_page'] ?? 15);
+    $per_page = !empty($pager['expose']['items_per_page'])
+      ? array_values(array_filter(array_map('intval', explode(',', (string) ($pager['expose']['items_per_page_options'] ?? '')))))
+      : [];
+
+    // advanced_search's sort select: "<label> ↓" for ASC, "↑" for DESC.
+    $orders = [];
+    foreach ($option('sorts') ?? [] as $id => $sort) {
+      if (!empty($sort['exposed'])) {
+        $orders[$id] = (string) ($sort['expose']['label'] ?? $id);
+      }
+    }
+
+    $advanced = $this->config('advanced_search.settings');
+    $fields = [];
+    if ($advanced->get('lucene_on_off') && $advanced->get('all_fields_on_off')) {
+      $fields['all'] = (string) ($advanced->get('lucene_label') ?: 'All');
+    }
+    $index = Index::load(static::INDEX);
+    foreach ($this->searchBlockFields() as $field) {
+      $fields[$field] = $index->getField($field)?->getLabel() ?? $field;
+    }
+
+    $displays = array_keys(array_filter([
+      'grid' => $advanced->get('grid_on_off'),
+      'list' => $advanced->get('list_on_off'),
+    ]));
+
+    return [
+      'perPage' => $per_page ?: [$default],
+      'perPageDefault' => $default,
+      'pagerQuantity' => (int) ($pager['quantity'] ?? 9),
+      'orders' => $orders,
+      'fields' => $fields,
+      'displays' => $displays,
+      'defaultDisplay' => $advanced->get('default-display-mode') ?: 'grid',
+    ];
+  }
+
+  /**
+   * Fields of the advanced search block placed on /search in the theme.
+   */
+  protected function searchBlockFields(): array {
+    $blocks = $this->entityTypeManager()->getStorage('block')->loadByProperties([
+      'theme' => static::THEME,
+      'plugin' => 'advanced_search_block:' . static::VIEW . '__' . static::DISPLAY,
+      'status' => TRUE,
+    ]);
+    uasort($blocks, fn($a, $b) => $a->getWeight() <=> $b->getWeight());
+    $block = reset($blocks);
+    return $block ? array_values($block->getPlugin()->getConfiguration()['fields'] ?? []) : [];
   }
 
   /**
@@ -94,11 +172,17 @@ class FastSearchController extends ControllerBase {
       ->addCacheContexts(['url.query_args', 'user.permissions', 'languages:language_content'])
       ->addCacheTags(['search_api_list:' . static::INDEX, 'config:block_list', 'config:facets_facet_list']);
 
-    $per_page = (int) $request->query->get('items_per_page', static::PER_PAGE[0]);
-    $per_page = in_array($per_page, static::PER_PAGE, TRUE) ? $per_page : static::PER_PAGE[0];
+    $settings = $this->settings();
+    $cacheability->addCacheTags(['config:views.view.' . static::VIEW, 'config:advanced_search.settings']);
+    $per_page = (int) $request->query->get('items_per_page', $settings['perPageDefault']);
+    $per_page = in_array($per_page, $settings['perPage'], TRUE) ? $per_page : $settings['perPageDefault'];
     $page = max(0, (int) $request->query->get('page', 0));
 
-    $query = $index->query(['limit' => $per_page, 'offset' => $page * $per_page]);
+    // ?facet=<alias> asks for one facet's full list ("Show more"), no results.
+    $only = (string) $request->query->get('facet', '');
+    $only = isset($blocks[$only]) ? $only : '';
+
+    $query = $index->query(['limit' => $only ? 0 : $per_page, 'offset' => $only ? 0 : $page * $per_page]);
     $query->setSearchId('sacda_fast_search');
     // The index has excerpt_always on, so Highlight would load every result
     // to build excerpts this UI never shows: ~30% of the request.
@@ -108,7 +192,7 @@ class FastSearchController extends ControllerBase {
 
     // The view's sorts are all exposed, so exactly one applies (relevance by
     // default). Adding a tie-breaker here would reorder unkeyed searches.
-    [$sort_field, $sort_direction] = $this->order((string) $request->query->get('sort_by', ''), (string) $request->query->get('sort_order', ''));
+    [$sort_field, $sort_direction] = $this->order(array_keys($settings['orders']), (string) $request->query->get('sort_by', ''), (string) $request->query->get('sort_order', ''));
     $query->sort($sort_field, $sort_direction);
 
     // Selected values, grouped by facet alias.
@@ -137,6 +221,9 @@ class FastSearchController extends ControllerBase {
           $group->addCondition($field, $value);
         }
         $query->addConditionGroup($group);
+      }
+      if ($only && $only !== $alias) {
+        continue;
       }
       $solr_facets[$field] = [
         'field' => $field,
@@ -171,6 +258,11 @@ class FastSearchController extends ControllerBase {
       }
     }
 
+    $facets = $this->facetsOut($only ? [$only => $blocks[$only]] : $blocks, $results->getExtraData('search_api_facets', []), $active, (bool) $only);
+    if ($only) {
+      return (new CacheableJsonResponse(['facets' => $facets]))->addCacheableDependency($cacheability);
+    }
+
     $nids = [];
     foreach ($results->getResultItems() as $item) {
       if (preg_match('/^entity:node\/(\d+):/', $item->getId(), $m)) {
@@ -183,7 +275,7 @@ class FastSearchController extends ControllerBase {
       'page' => $page,
       'perPage' => $per_page,
       'results' => $this->rows($nids, $cacheability),
-      'facets' => $this->facetsOut($blocks, $results->getExtraData('search_api_facets', []), $active),
+      'facets' => $facets,
     ]))->addCacheableDependency($cacheability);
   }
 
@@ -193,9 +285,9 @@ class FastSearchController extends ControllerBase {
    * The theme's `order` select (e.g. title_desc) drives sort_by/sort_order;
    * /search ignores `order` itself in the URL.
    */
-  protected function order(string $field, string $direction): array {
+  protected function order(array $exposed, string $field, string $direction): array {
     $direction = strtoupper($direction);
-    if (in_array($field, static::ORDERS, TRUE)) {
+    if (in_array($field, $exposed, TRUE)) {
       return [$field, $direction === 'ASC' ? 'ASC' : 'DESC'];
     }
     return ['search_api_relevance', 'DESC'];
@@ -317,11 +409,17 @@ class FastSearchController extends ControllerBase {
   /**
    * Facet blocks with ordered, labelled, nested items.
    *
-   * Mirrors the processors configured on these facets: active first, then
-   * count, then display value; hierarchy (resource types) with
-   * hide_inactive_siblings; labels truncated the way advanced_search does.
+   * Mirrors each facet's own settings: its sort processors in their order and
+   * direction, hierarchy, hide_inactive_siblings, soft limit and labels, and
+   * advanced_search's label truncation.
+   *
+   * Only the soft limit's worth of top-level values is sent (plus any that are
+   * selected); `more` says how many were left out, and the UI fetches them
+   * with ?facet=<alias> when "Show more" is clicked. Large archives have
+   * thousands of values per facet, and sending them all made each response
+   * ~800 KB and spent most of its time here.
    */
-  protected function facetsOut(array $blocks, array $raw, array $active): array {
+  protected function facetsOut(array $blocks, array $raw, array $active, bool $full = FALSE): array {
     $tids = [];
     foreach ($blocks as ['facet' => $facet]) {
       if (in_array($facet->getFieldIdentifier(), static::TERM_ID_FIELDS, TRUE)) {
@@ -371,10 +469,25 @@ class FastSearchController extends ControllerBase {
         $items[$value] = [
           'value' => $value,
           'label' => is_numeric($truncate) ? Unicode::truncate($name, (int) $truncate, TRUE, TRUE) : $name,
+          'sortLabel' => $this->transliteration->removeDiacritics($name),
           'count' => (int) $bucket['count'],
           'active' => in_array($value, $selected, TRUE),
           'parent' => $is_term && $facet->getUseHierarchy() ? (string) ($terms[$value]->parent ?? '0') : '0',
         ];
+      }
+
+      $soft_limit = (int) ($widget['config']['soft_limit'] ?? 0);
+      $tree = $this->tree($items, $this->comparator($facet), isset($facet->getProcessorConfigs()['hide_inactive_siblings_processor']));
+      $more = 0;
+      if (!$full && $soft_limit && count($tree) > $soft_limit) {
+        // Selected values stay listed even past the limit, so they can be
+        // unticked.
+        $shown = array_merge(
+          array_slice($tree, 0, $soft_limit),
+          array_values(array_filter(array_slice($tree, $soft_limit), fn($i) => $i['active'])),
+        );
+        $more = count($tree) - count($shown);
+        $tree = $shown;
       }
 
       $out[] = [
@@ -383,32 +496,71 @@ class FastSearchController extends ControllerBase {
         'label' => $label,
         'widget' => 'checkbox',
         'active' => (bool) $selected,
-        'softLimit' => (int) ($widget['config']['soft_limit'] ?? 0),
+        'softLimit' => $soft_limit,
+        'more' => $more,
         'showMore' => $widget['config']['soft_limit_settings']['show_more_label'] ?? 'Show more',
         'showLess' => $widget['config']['soft_limit_settings']['show_less_label'] ?? 'Show less',
         'showCount' => !empty($widget['config']['show_numbers']),
-        'items' => $this->tree($items, '0', isset($facet->getProcessorConfigs()['hide_inactive_siblings_processor'])),
+        'items' => $tree,
       ];
     }
     return $out;
   }
 
   /**
-   * Nests items under their parents and orders each level.
+   * facets' sort for one facet: its sort processors by weight, first non-tie
+   * wins, DESC reverses (DefaultFacetManager::sortFacetResults()).
    */
-  protected function tree(array $items, string $parent, bool $hide_inactive_siblings): array {
-    $level = array_values(array_filter($items, fn($i) => $i['parent'] === $parent
+  protected function comparator(FacetInterface $facet): \Closure {
+    $sorts = [];
+    foreach ($facet->getProcessorConfigs() as $id => $config) {
+      if (isset(static::SORTS[$id])) {
+        $sorts[] = [(int) ($config['weights']['sort'] ?? 0), static::SORTS[$id], ($config['settings']['sort'] ?? 'ASC') === 'DESC' ? -1 : 1];
+      }
+    }
+    usort($sorts, fn($a, $b) => $a[0] <=> $b[0]);
+    return function (array $a, array $b) use ($sorts): int {
+      foreach ($sorts as [, $key, $direction]) {
+        $result = match ($key) {
+          // ActiveWidgetOrderProcessor: ascending puts active values first.
+          'active' => $b['active'] <=> $a['active'],
+          'sortLabel', 'value' => strnatcasecmp((string) $a[$key], (string) $b[$key]),
+          default => $a[$key] <=> $b[$key],
+        };
+        if ($result) {
+          return $result * $direction;
+        }
+      }
+      return 0;
+    };
+  }
+
+  /**
+   * Nests items under their parents and sorts each level.
+   *
+   * Grouped once by parent: a facet can hold thousands of values, and
+   * scanning the whole list per item was quadratic.
+   */
+  protected function tree(array $items, \Closure $compare, bool $hide_inactive_siblings): array {
+    $children = [];
+    foreach ($items as $value => $item) {
       // Children whose parent is not in the result set surface at the top.
-      || ($parent === '0' && !isset($items[$i['parent']]))));
-    usort($level, fn($a, $b) => [$b['active'], $b['count'], $a['label']] <=> [$a['active'], $a['count'], $b['label']]);
-    if ($hide_inactive_siblings && array_filter($level, fn($i) => $i['active'])) {
-      $level = array_values(array_filter($level, fn($i) => $i['active']));
+      $parent = $item['parent'] !== (string) $value && isset($items[$item['parent']]) ? $item['parent'] : '0';
+      $children[$parent][] = $item;
     }
-    foreach ($level as &$item) {
-      $item['children'] = $item['value'] === $parent ? [] : $this->tree($items, $item['value'], $hide_inactive_siblings);
-      unset($item['parent']);
-    }
-    return $level;
+    $build = function (string $parent) use (&$build, $children, $compare, $hide_inactive_siblings): array {
+      $level = $children[$parent] ?? [];
+      usort($level, $compare);
+      if ($hide_inactive_siblings && array_filter($level, fn($i) => $i['active'])) {
+        $level = array_values(array_filter($level, fn($i) => $i['active']));
+      }
+      foreach ($level as &$item) {
+        $item['children'] = $build((string) $item['value']);
+        unset($item['parent'], $item['sortLabel']);
+      }
+      return $level;
+    };
+    return $build('0');
   }
 
 }

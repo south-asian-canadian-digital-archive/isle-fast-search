@@ -3,25 +3,27 @@
 //   a[n][c|f|i|v]  advanced_search terms     f[n]=alias:value  facets
 //   sort_by/sort_order  exposed sort          items_per_page, display, page
 
-export const FIELDS = [
-  ['all', 'Keyword'],
-  ['title_aggregated_fulltext', 'Title'],
-  ['subject_aggregated_fulltext', 'Subjects'],
-  ['field_resource_type', 'Resource Type'],
-  ['abstract_description_fulltext', 'Description'],
-  ['linked_agent_name_fulltext', 'Names'],
-];
+// Read from Drupal by configure() before the app mounts (drupalSettings, built
+// from the view, the advanced search block and advanced_search.settings), so
+// these follow whatever is set there. The values here are only fallbacks.
+export let FIELDS = [['all', 'Keyword']];
+// advanced_search's sort select: "<label> ↓" is ASC, "↑" DESC.
+export let ORDERS = [['search_api_relevance_desc', 'Relevance ↑']];
+export let PER_PAGE = [15];
+export let PER_PAGE_DEFAULT = 15;
+export let PAGER_QUANTITY = 5;
+export let DISPLAYS = ['grid', 'list'];
+export let DEFAULT_DISPLAY = 'grid';
 
-export const ORDERS = [
-  ['search_api_relevance_asc', 'Relevance ↓'],
-  ['search_api_relevance_desc', 'Relevance ↑'],
-  ['title_asc', 'Title ↓'],
-  ['title_desc', 'Title ↑'],
-  ['edtf_year_asc', 'Year ↓'],
-  ['edtf_year_desc', 'Year ↑'],
-];
-
-export const PER_PAGE = [15, 60, 120];
+export function configure(settings = {}) {
+  if (settings.fields) FIELDS = Object.entries(settings.fields);
+  if (settings.orders) ORDERS = Object.entries(settings.orders).flatMap(([id, label]) => [[`${id}_asc`, `${label} ↓`], [`${id}_desc`, `${label} ↑`]]);
+  if (settings.perPage?.length) PER_PAGE = settings.perPage;
+  if (settings.perPageDefault) PER_PAGE_DEFAULT = settings.perPageDefault;
+  if (settings.pagerQuantity) PAGER_QUANTITY = settings.pagerQuantity;
+  if (settings.displays?.length) DISPLAYS = settings.displays;
+  if (settings.defaultDisplay) DEFAULT_DISPLAY = settings.defaultDisplay;
+}
 
 const blankTerm = () => ({ c: 'AND', f: 'all', i: 'IS', v: '' });
 
@@ -30,8 +32,8 @@ class SearchState {
   facets = $state([]);
   sortBy = $state('');
   sortOrder = $state('');
-  perPage = $state(15);
-  display = $state('grid');
+  perPage = $state(PER_PAGE_DEFAULT);
+  display = $state(DEFAULT_DISPLAY);
   page = $state(0);
 
   data = $state(null);
@@ -40,6 +42,7 @@ class SearchState {
 
   #endpoint = '/api/search';
   #responses = new Map();
+  #fullFacets = new Map();
   #controller = null;
 
   get order() {
@@ -67,8 +70,8 @@ class SearchState {
     this.facets = [...params.entries()].filter(([k]) => /^f\[\d*\]$/.test(k)).map(([, v]) => v);
     this.sortBy = params.get('sort_by') ?? '';
     this.sortOrder = params.get('sort_order') ?? '';
-    this.perPage = PER_PAGE.includes(Number(params.get('items_per_page'))) ? Number(params.get('items_per_page')) : 15;
-    this.display = params.get('display') === 'list' ? 'list' : 'grid';
+    this.perPage = PER_PAGE.includes(Number(params.get('items_per_page'))) ? Number(params.get('items_per_page')) : PER_PAGE_DEFAULT;
+    this.display = DISPLAYS.includes(params.get('display')) ? params.get('display') : DEFAULT_DISPLAY;
     this.page = Math.max(0, Number(params.get('page')) || 0);
   }
 
@@ -87,8 +90,8 @@ class SearchState {
       params.set('sort_by', s.sortBy);
       params.set('sort_order', s.sortOrder || 'DESC');
     }
-    if (s.perPage !== 15) params.set('items_per_page', String(s.perPage));
-    if (s.display !== 'grid') params.set('display', s.display);
+    if (s.perPage !== PER_PAGE_DEFAULT) params.set('items_per_page', String(s.perPage));
+    if (s.display !== DEFAULT_DISPLAY) params.set('display', s.display);
     if (s.page) params.set('page', String(s.page));
     return params.toString();
   }
@@ -105,7 +108,7 @@ class SearchState {
   }
 
   async load(push) {
-    const qs = this.query({ display: 'grid' });
+    const qs = this.query({ display: DEFAULT_DISPLAY });
     if (push) history.pushState(null, '', this.href());
     if (this.#responses.has(qs)) {
       this.data = this.#responses.get(qs);
@@ -126,6 +129,27 @@ class SearchState {
     } finally {
       this.loading = false;
     }
+  }
+
+  /**
+   * One facet's full value list, for "Show more". The search response only
+   * carries each facet's first soft-limit values.
+   */
+  async facetItems(alias) {
+    const qs = this.query({ display: DEFAULT_DISPLAY, page: 0 });
+    const key = `${qs}|${alias}`;
+    if (!this.#fullFacets.has(key)) {
+      const params = new URLSearchParams(qs);
+      params.set('facet', alias);
+      this.#fullFacets.set(key, fetch(`${this.#endpoint}?${params}`)
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`Search failed (${res.status}).`))))
+        .then((json) => json.facets[0]?.items ?? [])
+        .catch((e) => {
+          this.#fullFacets.delete(key);
+          throw e;
+        }));
+    }
+    return this.#fullFacets.get(key);
   }
 
   toggleFacet(alias, value) {
